@@ -72,5 +72,10 @@ namespace Cake.Ftp {
         /// If true all ssl certificates are accepted
         /// </summary>
         public bool ValidateAnyCertificate { get; set; }
+
+        /// <summary>
+        /// FTP port, default is 21
+        /// </summary>
+        public int Port { get; set; } = 21;
     }
 }

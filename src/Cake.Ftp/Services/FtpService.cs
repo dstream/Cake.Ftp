@@ -90,7 +90,9 @@ namespace Cake.Ftp.Services {
         }
 
         private FluentFTP.FtpClient CreateClient(string host, FtpSettings settings) {
-            var client = new FluentFTP.FtpClient(host, new NetworkCredential(settings.Username, settings.Password));
+            var client = settings.Port == 21 || settings.Port <= 0 ?
+                new FluentFTP.FtpClient(host, new NetworkCredential(settings.Username, settings.Password)) :
+                new FluentFTP.FtpClient(host, settings.Port, new NetworkCredential(settings.Username, settings.Password));
             client.OnLogEvent += OnLogEvent;
 
             client.ValidateAnyCertificate = settings.ValidateAnyCertificate;

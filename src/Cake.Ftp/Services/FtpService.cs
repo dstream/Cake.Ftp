@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
@@ -207,79 +208,119 @@ namespace Cake.Ftp.Services {
                 var sourceFolder = new DirectoryInfo(sourcePath);
                 var fileSystemInfos = sourceFolder.EnumerateFileSystemInfos("*", SearchOption.AllDirectories);                                
                 var _taskScheduler = new LimitedConcurrencyLevelTaskScheduler(parallel);
-                var taskList = new List<Task>();                
+                var taskList = new List<Task>();
+                var listFileFailed = new List<FileSystemInfo>();
 
-                foreach (var fileInfo in fileSystemInfos)
-                {
-                    if (fileInfo.FullName == sourceFolder.FullName) { continue; }
-                    var currentFile = fileInfo; //It's because the task shows the value of i at the time that the task is executed, not when the task was created.
-                    var relativePath = Uri.UnescapeDataString(currentFile.FullName.Remove(0, sourceFolder.FullName.Length));                    
+                ProcessParallelFolderUpload(fileSystemInfos, host, remotePath, settings, sourceFolder, _taskScheduler, cancellationToken, taskList, listFileFailed, ignoreRule);
 
-                    if (ignoreRule != null && ignoreRule(relativePath)) { continue; }
+                #region old code
+                //foreach (var fileInfo in fileSystemInfos)
+                //{
+                //    if (fileInfo.FullName == sourceFolder.FullName) { continue; }
+                //    var currentFile = fileInfo; //It's because the task shows the value of i at the time that the task is executed, not when the task was created.
+                //    var relativePath = Uri.UnescapeDataString(currentFile.FullName.Remove(0, sourceFolder.FullName.Length));                    
 
-                    var remoteRelativePath = string.Concat(remotePath, relativePath.Replace("\\", "/"));
+                //    if (ignoreRule != null && ignoreRule(relativePath)) { continue; }
 
-                    Task task = Task.Factory.StartNew(() =>
-                    {                        
-                        try
-                        {
-                            using (var client = CreateClient(host, settings))
-                            {
-                                Connect(client, settings.AutoDetectConnectionSettings);
-                                if (currentFile.Attributes == FileAttributes.Directory)
-                                {
-                                    //Create if the dir doesn't exist
-                                    if (!client.DirectoryExists(remoteRelativePath))
-                                    {
-                                        if(client.CreateDirectory(remoteRelativePath, true))
-                                        {
-                                            _log.Information("Created folder: " + remoteRelativePath);
-                                        }
-                                    }                                    
-                                }
-                                else
-                                {                                                                        
-                                    client.TransferChunkSize = 10000;
-                                    client.UploadDataType = FtpDataType.Binary;
-                                    client.RetryAttempts = 3;
+                //    var remoteRelativePath = string.Concat(remotePath, relativePath.Replace("\\", "/"));
 
-                                    //only upload newer file or different size - untest
-                                    //var remoteFile = client.GetObjectInfo(remotePath);
-                                    //if (remoteFile != null)
-                                    //{
-                                    //    if(currentFile.CreationTime <= remoteFile.Modified && ((FileInfo)currentFile).Length == remoteFile.Size)
-                                    //    {
-                                    //        _log.Information(DateTime.Now + " Skiped file: " + currentFile.FullName);
-                                    //        client.Disconnect();
-                                    //        return;
-                                    //    }                                        
-                                    //}
-                                    
-                                    var fileUploadedResult = client.UploadFile(currentFile.FullName, remoteRelativePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry | FtpVerify.Throw);
-                                    if (fileUploadedResult.IsSuccess())
-                                    {
-                                        _log.Information(currentFile.FullName + " -> " + remoteRelativePath);
-                                    }
-                                    else
-                                    {
-                                        _log.Warning(DateTime.Now + " Failure file: " + currentFile.FullName);
-                                    }                                    
-                                }
-                                client.Disconnect();
-                            }
+                //    Task task = Task.Factory.StartNew(() =>
+                //    {                        
+                //        try
+                //        {
+                //            using (var client = CreateClient(host, settings))
+                //            {
+                //                Connect(client, settings.AutoDetectConnectionSettings);
+                //                if (currentFile.Attributes == FileAttributes.Directory)
+                //                {
+                //                    //Create if the dir doesn't exist
+                //                    if (!client.DirectoryExists(remoteRelativePath))
+                //                    {
+                //                        if(client.CreateDirectory(remoteRelativePath, true))
+                //                        {
+                //                            _log.Information("Created folder: " + remoteRelativePath);
+                //                        }
+                //                    }                                    
+                //                }
+                //                else
+                //                {                                                                        
+                //                    client.TransferChunkSize = 10000;
+                //                    client.UploadDataType = FtpDataType.Binary;
+                //                    client.RetryAttempts = 3;
 
-                        }
-                        catch (Exception ex)
-                        {
-                            _log.Error(DateTime.Now.ToString(CultureInfo.InvariantCulture) +
-                                            "Error in Uploading file " + remoteRelativePath + " " + ex.Message +
-                                            Environment.NewLine + ex.InnerException + Environment.NewLine +
-                                            ex.StackTrace);
-                        }                        
-                    }, cancellationToken.Token, TaskCreationOptions.AttachedToParent, _taskScheduler);
-                    taskList.Add(task);                    
-                }
+                //                    //only upload newer file or different size - untest
+                //                    //var remoteFile = client.GetObjectInfo(remotePath);
+                //                    //if (remoteFile != null)
+                //                    //{
+                //                    //    if(currentFile.CreationTime <= remoteFile.Modified && ((FileInfo)currentFile).Length == remoteFile.Size)
+                //                    //    {
+                //                    //        _log.Information(DateTime.Now + " Skiped file: " + currentFile.FullName);
+                //                    //        client.Disconnect();
+                //                    //        return;
+                //                    //    }                                        
+                //                    //}
+
+                //                    var fileUploadedResult = client.UploadFile(currentFile.FullName, remoteRelativePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry | FtpVerify.Throw);
+                //                    if (fileUploadedResult.IsSuccess())
+                //                    {
+                //                        _log.Information(currentFile.FullName + " -> " + remoteRelativePath);
+                //                    }
+                //                    else
+                //                    {
+                //                        _log.Warning(DateTime.Now + " Failure file: " + currentFile.FullName);
+                //                    }                                    
+                //                }
+                //                client.Disconnect();
+                //            }
+
+                //        }
+                //        catch (Exception ex)
+                //        {
+                //            listFileFailed.Add(currentFile);
+                //            _log.Error(DateTime.Now.ToString(CultureInfo.InvariantCulture) +
+                //                            "Error in Uploading file " + remoteRelativePath + " " + ex.Message +
+                //                            Environment.NewLine + ex.InnerException + Environment.NewLine +
+                //                            ex.StackTrace);                            
+                //        }                        
+                //    }, cancellationToken.Token, TaskCreationOptions.AttachedToParent, _taskScheduler);
+
+                //    taskList.Add(task);                    
+                //}
+                #endregion
                 Task.WaitAll(taskList.ToArray(), cancellationToken.Token);
+
+                if (listFileFailed.Any())
+                {
+                    _log.Information($"------------ Retry 1st ({listFileFailed.Count} files) -------------");
+
+                    taskList = new List<Task>();
+                    var listFileFailed2 = new List<FileSystemInfo>();
+                    ProcessParallelFolderUpload(listFileFailed, host, remotePath, settings, sourceFolder, _taskScheduler, cancellationToken, taskList, listFileFailed2, ignoreRule);
+
+                    Task.WaitAll(taskList.ToArray(), cancellationToken.Token);
+
+                    if (listFileFailed2.Any())
+                    {
+                        _log.Information($"------------ Retry 2nd ({listFileFailed2.Count} files) -------------");
+
+                        taskList = new List<Task>();
+                        var listFileFailed3 = new List<FileSystemInfo>();
+                        ProcessParallelFolderUpload(listFileFailed2, host, remotePath, settings, sourceFolder, _taskScheduler, cancellationToken, taskList, listFileFailed3, ignoreRule);
+
+                        Task.WaitAll(taskList.ToArray(), cancellationToken.Token);
+
+                        if (listFileFailed3.Any())
+                        {
+                            _log.Information($"------------ Retry 3rd ({listFileFailed3.Count} files) -------------");
+
+                            taskList = new List<Task>();
+                            var listFileFailed4 = new List<FileSystemInfo>();
+                            ProcessParallelFolderUpload(listFileFailed3, host, remotePath, settings, sourceFolder, _taskScheduler, cancellationToken, taskList, listFileFailed4, ignoreRule);
+
+                            Task.WaitAll(taskList.ToArray(), cancellationToken.Token);
+                        }
+                    }
+                }
 
                 _log.Information(DateTime.Now + " Upload done");
             }
@@ -287,6 +328,85 @@ namespace Cake.Ftp.Services {
             {
                 _log.Error(DateTime.Now.ToString(CultureInfo.InvariantCulture) + "Error in Uploading file: " + sourcePath + " " + ex.Message + Environment.NewLine + ex.InnerException + Environment.NewLine + ex.StackTrace);
             }
+        }
+
+        private void ProcessParallelFolderUpload(IEnumerable<FileSystemInfo> fileSystemInfos, string host, string remotePath, FtpSettings settings, 
+            DirectoryInfo sourceFolder, LimitedConcurrencyLevelTaskScheduler _taskScheduler, CancellationTokenSource cancellationToken, 
+            List<Task> taskList, List<FileSystemInfo> listFileFailed, Func<string, bool> ignoreRule = null)
+        {
+            foreach (var fileInfo in fileSystemInfos)
+            {
+                if (fileInfo.FullName == sourceFolder.FullName) { continue; }
+                var currentFile = fileInfo; //It's because the task shows the value of i at the time that the task is executed, not when the task was created.
+                var relativePath = Uri.UnescapeDataString(currentFile.FullName.Remove(0, sourceFolder.FullName.Length));
+
+                if (ignoreRule != null && ignoreRule(relativePath)) { continue; }
+
+                var remoteRelativePath = string.Concat(remotePath, relativePath.Replace("\\", "/"));
+
+                Task task = Task.Factory.StartNew(() =>
+                {
+                    try
+                    {
+                        using (var client = CreateClient(host, settings))
+                        {
+                            Connect(client, settings.AutoDetectConnectionSettings);
+                            if (currentFile.Attributes == FileAttributes.Directory)
+                            {
+                                //Create if the dir doesn't exist
+                                if (!client.DirectoryExists(remoteRelativePath))
+                                {
+                                    if (client.CreateDirectory(remoteRelativePath, true))
+                                    {
+                                        _log.Information("Created folder: " + remoteRelativePath);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                client.TransferChunkSize = 10000;
+                                client.UploadDataType = FtpDataType.Binary;
+                                client.RetryAttempts = 3;
+
+                                //only upload newer file or different size - untest
+                                //var remoteFile = client.GetObjectInfo(remotePath);
+                                //if (remoteFile != null)
+                                //{
+                                //    if(currentFile.CreationTime <= remoteFile.Modified && ((FileInfo)currentFile).Length == remoteFile.Size)
+                                //    {
+                                //        _log.Information(DateTime.Now + " Skiped file: " + currentFile.FullName);
+                                //        client.Disconnect();
+                                //        return;
+                                //    }                                        
+                                //}
+
+                                var fileUploadedResult = client.UploadFile(currentFile.FullName, remoteRelativePath, FtpRemoteExists.Overwrite, true, FtpVerify.Retry | FtpVerify.Throw);
+                                if (fileUploadedResult.IsSuccess())
+                                {
+                                    _log.Information(currentFile.FullName + " -> " + remoteRelativePath);
+                                }
+                                else
+                                {
+                                    _log.Warning(DateTime.Now + " Failure file: " + currentFile.FullName);
+                                }
+                            }
+                            client.Disconnect();
+                        }
+
+                    }
+                    catch (Exception ex)
+                    {
+                        listFileFailed.Add(currentFile);
+                        _log.Error(DateTime.Now.ToString(CultureInfo.InvariantCulture) +
+                                        "Error in Uploading file " + remoteRelativePath + " " + ex.Message +
+                                        Environment.NewLine + ex.InnerException + Environment.NewLine +
+                                        ex.StackTrace);
+                    }
+                }, cancellationToken.Token, TaskCreationOptions.AttachedToParent, _taskScheduler);
+
+                taskList.Add(task);
+            }
+            Task.WaitAll(taskList.ToArray(), cancellationToken.Token);
         }
 
         /// <summary>
@@ -305,7 +425,7 @@ namespace Cake.Ftp.Services {
                 client.DownloadFile(localPath, remotePath, FtpLocalExists.Overwrite, FtpVerify.Retry | FtpVerify.Throw);
                 client.Disconnect();
             }
-        }
+        }        
 
     }
 
@@ -452,5 +572,5 @@ namespace Cake.Ftp.Services {
                 if (lockTaken) Monitor.Exit(_tasks);
             }
         }
-    }
+    }    
 }

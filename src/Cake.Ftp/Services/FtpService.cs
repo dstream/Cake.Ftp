@@ -39,8 +39,12 @@ namespace Cake.Ftp.Services {
             using (var client = CreateClient(host, settings)) {
                 Connect(client, settings.AutoDetectConnectionSettings);   
                 
-                client.UploadFile(uploadFile.Path.FullPath, remotePath, Translate(settings.FileExistsBehavior), settings.CreateRemoteDirectory);
+                var fileUploadedResult = client.UploadFile(uploadFile.Path.FullPath, remotePath, Translate(settings.FileExistsBehavior), settings.CreateRemoteDirectory, FtpVerify.Retry | FtpVerify.Throw);
                 client.Disconnect();
+                if (!fileUploadedResult.IsSuccess())
+                {
+                    _log.Warning(DateTime.Now + " Failure file: " + uploadFile.Path.FullPath);
+                }
             }
         }
 
